@@ -31,7 +31,7 @@ I collected all data from a color-banded population of Florida scrub-jays at Arc
 ### Body mass
 Florida scrub-jays show small day-to-day mass fluctuations (less than 3% body mass of adult; Cucco & Bowman 2018). I collected weekly body mass of nonbreeders from February to March (the start of breeding season) of 2019. I trained Florida scrub-jays to perch on an electronic scale (Ohaus NV511 Precision Balance; repeatability 0.1 g with < 1 second stabilization time). I placed a video recorder on a tripod panning the scale LED then I scored the values back in the lab. Because Florida scrub-jays exhibit diurnal mass gain (Cucco & Bowman 2018), all weights were measured between 7 to 10 am, depending on when the group was located. 
 
-![Florida scrub-jay on scale](/scale.JPG)
+![Florida scrub-jay on scale](/scale.jpg)
 
 
 ### Oxidative stress
