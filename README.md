@@ -4,7 +4,7 @@ Project looking at whether extraterritorial movement is costly in a resident coo
 ## Data set descriptions
 
 - `Forays.xlsx`: movement data collected in 2019 using standardized playbacks at set locations across the study tract; data owned by Avian Ecology Lab at Archbold Biological Station
-- `OxiMeasures.xlsx`: combined data for oxidative stress assays (OXY-Ad and d-ROMs); data collected and owned by YS
+- `OxidativeMeasures.csv`: combined data for oxidative stress assays (OXY-Ad and d-ROMs); data collected and owned by YS
 - `Weights.xlsx`: weight data collected in 2019; data collected and owned by YS
 
 # Introduction to study
