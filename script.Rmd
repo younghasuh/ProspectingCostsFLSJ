@@ -8,6 +8,7 @@ author: "Young Ha Suh"
 Load libraries
 ```{r}
 library(MuMIn)
+library(lme4)
 library(here)
 library(ggplot2)
 library(readxl)
