@@ -3,6 +3,8 @@ title: "Script for prospecting costs in FLSJ"
 output: html_document
 date: "2023-09-15"
 author: "Young Ha Suh"
+editor_options: 
+  chunk_output_type: console
 ---
 
 Load libraries
@@ -12,40 +14,687 @@ library(lme4)
 library(here)
 library(ggplot2)
 library(readxl)
+library(tidyverse)
+library(cowplot)
+```
+
+Figure theme
+```{r}
+mytheme <- theme(
+  plot.title = element_text(size=18,face="bold",color="black"),      
+  axis.text=element_text(size=18, color="black"),
+  axis.title=element_text(size=18,face="bold",color="black"),
+  axis.text.x=element_text(size=18, color="black"), 
+  axis.text.y=element_text(size=18, color="black"),
+  legend.text = element_text(size=18, color="black"),
+  legend.title = element_text(size=18, color="black", face="bold")) +
+  theme_classic()
 ```
 
 
 Load datasets 
 ```{r}
+here::i_am("script.Rmd")
+
 forays <- read_excel("Forays.xlsx")
 natal <- read_excel("Natalnest.xlsx")
-samples <- read_excel("FSJ_samples.xlsx")
+measures <- read_excel("FSJ_samples.xlsx")
 oxi <- read.csv("OxidativeMeasures.csv")
 wts <- read.csv("Weights.csv")
+habitat <- read_excel("terryrhabitat.xlsx") # habitat values for Apr 2019 (year of forays)
+
+
+### Clean data
+
+# Oxi measures
+oxi$Age <- as.factor(oxi$Age)
+oxi <- oxi[-77,] # remove duplicate oxy value
+
+# Weights
+wts$ti <- factor(wts$Time)
+wts$time <- as.numeric(format(as.POSIXct(wts$ti, format="%H:%M:%S"),"%H")) # get hour of day
+wts$age <- 2019-wts$JayYr
+wts$social <- ifelse(wts$age == 1, "helper", "older")
+
+# Samples
+measures <- measures[-56,] #error; last row is blank
+
+# List of territories
+terrlist <- forays %>% dplyr::select(JayID, MarTerr)
 ```
 
-
-### 
-Using AICc
-###
-
-# Fit model by REML
-fm2 <- lme(distance ~ Sex*age, data = Orthodont,
-    random = ~ 1|Subject / Sex, method = "REML")
-
-# Model selection: ranking by AICc using ML
-ms2 <- dredge(fm2, trace = TRUE, rank = "AICc", REML = FALSE)
-
-(attr(ms2, "rank.call"))
-
-# Get the models (fitted by REML, as in the global model)
-fmList <- get.models(ms2, 1:4)
-
-# Because the models originate from 'dredge(..., rank = AICc, REML = FALSE)',
-# the default weights in 'model.avg' are ML based:
-summary(model.avg(fmList))
-
+1) Tidy data - oxidative stress
 ```{r}
+ox2 <- oxi %>%
+  dplyr::select(JayID, Age, OXYAd, dROM_avg) %>% 
+  pivot_longer(c(OXYAd, dROM_avg), names_to = "measure", values_to = "value")
+
+ox3 <- ox2 %>% 
+  unite(age_oxi, Age, measure) %>% 
+  pivot_wider(names_from = age_oxi, values_from = value) %>% 
+  as.data.frame()
+
+ox4 <- ox3 %>% 
+  group_by(JayID) %>% 
+  mutate(oxy_dif = Independent_OXYAd - Nestling_OXYAd,
+    oxy_lm = Independent_OXYAd/Nestling_OXYAd,
+    rom_dif = Independent_dROM_avg - Nestling_dROM_avg,
+    rom_lm = Independent_dROM_avg/Nestling_dROM_avg) %>%  
+  dplyr::rowwise() %>%  
+  dplyr::mutate(oxy_avg = mean(c(Independent_OXYAd, Juvenile_OXYAd, Nestling_OXYAd), na.rm=T),
+         rom_avg = mean(c(Nestling_dROM_avg, Juvenile_dROM_avg, Independent_dROM_avg), na.rm=T)) %>% 
+  as.data.frame()
+```
+
+
+2) Tidy data - weights
+```{r}
+wts2 <- wts %>% 
+  dplyr::select(JayID, JayYr, Date, time, Terr, AvgWeight) %>% 
+  dplyr::group_by(JayID) %>% 
+  dplyr:: summarize(wts_1 = first(AvgWeight),
+            wts_n = last(AvgWeight),
+            wts_dif = wts_n - wts_1,
+            n = n(),
+            wts_lm = wts_n/wts_1)
+ws <- wts %>% 
+  dplyr::select(JayID, age, social) %>% distinct()
+
+wts3 <- wts2 %>% 
+  left_join(ws, by="JayID")
+```
+
+
+
+3) Tidy data - measurements
+```{r}
+# How does nestling measures relate to measures later in life?
+# Tidy measures dataset
+m <- measures %>% 
+  select(JayID, Weight, SocialClass) %>% 
+  pivot_wider(names_from = SocialClass, values_from = Weight) %>% 
+  mutate(wt_n = Nestling,
+         wt_j = Juvenile) %>% 
+  select(JayID, wt_n, wt_j)
+
+m2 <- measures %>% 
+  select(JayID, Tarsus, SocialClass) %>% 
+  pivot_wider(names_from = SocialClass, values_from = Tarsus) %>% 
+  mutate(tar_n = Nestling,
+         tar_j = Juvenile) %>% 
+  select(JayID, tar_n, tar_j)
+
+m3 <- measures %>% 
+  select(JayID, Primary7, SocialClass) %>% 
+  pivot_wider(names_from = SocialClass, values_from = Primary7) %>% 
+  mutate(p7_n = Nestling,
+         p7_j = Juvenile) %>% 
+  select(JayID, p7_n, p7_j)
+
+m4 <- measures %>% 
+  select(JayID, TailLength, SocialClass) %>% 
+  pivot_wider(names_from = SocialClass, values_from = TailLength) %>% 
+  mutate(tl_n = Nestling,
+         tl_j = Juvenile) %>% 
+  select(JayID, tl_n, tl_j)
+
+m5 <- measures %>% 
+  select(JayID, Hematocrit, SocialClass) %>% 
+  pivot_wider(names_from = SocialClass, values_from = Hematocrit) %>% 
+  mutate(he_n = Nestling,
+         he_j = Juvenile) %>% 
+  select(JayID, he_n, he_j)
+
+dflist <- list(m, m2, m3, m4, m5)
+meas <- dflist %>% reduce(full_join, by='JayID')
+
+# clean up
+remove(m, m2, m3, m4, m5, dflist)
+```
+
+Explore data
+```{r}
+# Look at relationships
+## weight: nestling vs. juvenile
+plot(wt_j~wt_n, data=meas, xlab="Nestling weight", ylab="Juvenile weight", pch=16)
+abline(lm(wt_j~wt_n, data=meas))
+summary(lm(wt_j~wt_n, data=meas)) #est=0.35, p=0.031
+
+fit1 <- lm(wt_j~wt_n, data=meas)
+p1 <- ggplot(fit1$model, aes_string(x = names(fit1$model)[2], y = names(fit1$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(fit1)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(fit1$coef[[1]],5 ),
+                                               " \nSlope =",signif(fit1$coef[[2]], 5),
+                                               " \nP =",signif(summary(fit1)$coef[2,4], 5))) +
+  mytheme + xlab("Nestling weight") + ylab("Juvenile weight")
+p1
+
+## tarsus: nestling vs. juvenile
+plot(tar_j~tar_n, data=meas)
+abline(lm(tar_j~tar_n, data=meas))
+summary(lm(tar_j~tar_n, data=meas)) #est=0.01, p=0.88 - no relationship
+
+fit2 <- lm(tar_j~tar_n, data=meas)
+p2 <- ggplot(fit2$model, aes_string(x = names(fit2$model)[2], y = names(fit2$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(fit2)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(fit2$coef[[1]],5 ),
+                                               " \nSlope =",signif(fit2$coef[[2]], 5),
+                                               " \nP =",signif(summary(fit2)$coef[2,4], 5))) +
+  mytheme + xlab("Nestling tarsus") + ylab("Juvenile tarsus") 
+  
+# check how tarsus length changes over age; add x=y line to check
+p2 + geom_abline(slope=1)
+# there is one bird that has a tarsus that "shrinks"
+meas[which(meas$tar_n>35),] #-QYW; remove from analysis? 
+meas2 <- meas[which(meas$tar_n <35),]
+
+
+fit2.1 <- lm(tar_j~tar_n, data=meas2)
+p2.1 <- ggplot(fit2.1$model, aes_string(x = names(fit2.1$model)[2], y = names(fit2.1$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(fit2.1)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(fit2.1$coef[[1]],5 ),
+                                               " \nSlope =",signif(fit2.1$coef[[2]], 5),
+                                               " \nP =",signif(summary(fit2.1)$coef[2,4], 5))) +
+  mytheme + xlab("Nestling tarsus") + ylab("Juvenile tarsus") 
+p2.1
+
+
+## p7
+plot(p7_j~p7_n, data=meas)
+abline(lm(p7_j~p7_n, data=meas))
+summary(lm(p7_j~p7_n, data=meas)) #est=0.22, p=0.16
+
+fit3 <- lm(p7_j~p7_n, data=meas)
+p3 <- ggplot(fit3$model, aes_string(x = names(fit3$model)[2], y = names(fit3$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(fit3)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(fit3$coef[[1]],5 ),
+                                               " \nSlope =",signif(fit3$coef[[2]], 5),
+                                               " \nP =",signif(summary(fit3)$coef[2,4], 5))) +
+  mytheme + xlab("Nestling 7th primary") + ylab("Juvenile 7th primary")
+p3
+
+## tail 
+plot(tl_j~tl_n, data=meas)
+abline(lm(tl_j~tl_n, data=meas))
+summary(lm(tl_j~tl_n, data=meas)) #est=0.009, p=0.89
+
+## hematocrit
+plot(he_j~he_n, data=meas)
+abline(lm(he_j~he_n, data=meas))
+summary(lm(he_j~he_n, data=meas)) #est=-3.20, p=0.699
+
+# remove one with hematocrit 1 (measurement error)
+meas3 <- meas[which(meas2$he_n <1),]
+summary(lm(he_j~he_n, data=meas3)) #est=-3.20, p=0.213
+plot(he_j~he_n, data=meas3)
+abline(lm(he_j~he_n, data=meas3))
+
+
+# plot together
+cowplot::plot_grid(p1, p2.1, p3, nrow=1, labels = c("A", "B", "C"))
+
+# supplemental Fig S1.
+ggsave("measurements_agecompare.png", plot=last_plot(), width=300, height=110, units="mm", dpi=300, scale=T)
+```
+
+Test for individual repeatability
+https://cran.r-project.org/web/packages/rptR/vignettes/rptR.html
+```{r}
+library(rptR)
+
+hist(oxi$OXYAd) # gaussian
+hist(oxi$dROM_avg) # poisson
+
+# Age-Adjusted repeatability
+### OXY-Ad
+rpt(OXYAd ~ Age + (1 | JayID), grname = "JayID", data = oxi, datatype = "Gaussian", 
+    nboot = 1000, npermut = 0)
+
+
+### d-ROM
+rpt(dROM_avg ~ Age + (1 | JayID), grname = "JayID", data = oxi, datatype = "Gaussian", 
+    nboot = 1000, npermut = 0) 
+```
+
+# 1
+Age-adjusted Repeatability for JayID
+R  = 0.07
+SE = 0.089
+CI = [0, 0.292]
+P  = 0.275 [LRT]
+     NA [Permutation]
+
+
+# 2
+Repeatability for JayID
+R  = 0.048
+SE = 0.087
+CI = [0, 0.299]
+P  = 0.366 [LRT]
+     NA [Permutation]
+
+
+
+Merge all
+```{r}
+dflist2 <- list(ox4, wts3, meas3, forays)
+dat0 <- dflist2 %>% reduce(full_join, by='JayID')
+
+dat <- dat0 %>% 
+  left_join(natal, by = "JayID") %>% 
+  mutate(oxy_ne = Nestling_OXYAd,
+         oxy_ju = Juvenile_OXYAd,
+         oxy_ind = Independent_OXYAd,
+         rom_ne = Nestling_dROM_avg,
+         rom_ju = Juvenile_dROM_avg,
+         rom_ind = Independent_dROM_avg) 
+```
+
+
+
+## Average territory width
+Territory information 
+```{r Territories 2019}
+# for spatial analysis
+library(raster) 
+library(rgeos)
+library(rgdal)
+library(sf)
+library(terra)
+
+terrs <- readOGR(dsn = ".", layer = "abs_fsj_t2019_p")
+plot(terrs)
+c1 <- gCentroid(terrs, byid = TRUE) # get centroid for each territory
+dist <- gDistance(c1, byid = TRUE) # produces a matrix of distances
+dist_min <- apply(dist, 2, FUN = function(x) {min(x[x > 0])}) # get minimum value for each column
+mean(dist_min) # 295.9396m <- is the average distance between two territory centroids; 147.9698m is half of that
+```
+
+
+
+# Summary 
+## Plot age stage trends - Fig. 1
+```{r plot oxi measures by age group}
+p1 <- ggplot(oxi, aes(x = Agen, y = OXYAd, group=JayID)) +
+  stat_boxplot(aes(x=Agen, group=Agen), geom = "errorbar", position = position_dodge(width = .75), width = .5) +
+  geom_boxplot(aes(x=Agen, group=Agen), outlier.size = 1.5, position = position_dodge(width = .75)) +
+  geom_point(aes(color = JayID), col="gray", size=1.2, alpha=0.6)+
+  geom_path(aes(color = JayID), col="gray", alpha=0.5)+
+  labs(x = "Age group", y = "OXY-Ads (HClO/ml)") +
+  theme_classic() +
+  mytheme +
+  theme(legend.position = "none") + 
+  scale_x_discrete(limits = c("Nestling", "Juvenile", "Independent"), labels=c("Nestling", "Juvenile", "Yearling"))
+
+p2 <- ggplot(oxi, aes(x = Agen, y = dROM_avg, group=JayID)) +
+  stat_boxplot(aes(x=Agen, group=Agen), geom = "errorbar", position = position_dodge(width = .75), width = .5) +
+  geom_boxplot(aes(x=Agen, group=Agen), outlier.size = 1.5, position = position_dodge(width = .75)) +
+  geom_point(aes(color = JayID),col="gray", size=1.2, alpha=0.6)+
+  geom_path(aes(color = JayID),col="gray", alpha=0.5)+
+  labs(x = "Age group", y = "d-ROMs (mg/dL)") +
+  theme_classic() +
+  mytheme +
+  theme(legend.position = "none") + 
+  scale_x_discrete(limits = c("Nestling", "Juvenile", "Independent"), labels=c("Nestling", "Juvenile", "Yearling"))
+
+cowplot::plot_grid(
+  p1,
+  p2,
+  align = 'vh',
+  labels = c("A", "B"),
+  nrow = 1, label_size = 22
+)
+
+ggsave("oxi_time_gray.png", plot=last_plot(), width=200, height=110, units="mm", dpi=300, scale=T)
+```
+
+
+## Relationship between OXY-Ads and d-ROMs
+```{r}
+ne <- oxi[which(oxi$Age=="Nestling"),]
+ju <- oxi[which(oxi$Age=="Juvenile"),]
+ind <- oxi[which(oxi$Age=="Independent"),]
+
+## Nestlings
+plot(OXYAd~dROM_avg, data=ne)
+abline(lm(OXYAd~dROM_avg, data=ne))
+summary(lm(OXYAd~dROM_avg, data=ne)) #est=0.22, p=0.72
+
+# remove outlier
+ne[which(ne$dROM_avg > 35),] #-QRH
+ne2 <- ne[which(ne$dROM_avg <35),]
+plot(OXYAd~dROM_avg, data=ne2)
+abline(lm(OXYAd~dROM_avg, data=ne2))
+summary(lm(OXYAd~dROM_avg, data=ne2)) #est=0.25, p=0.042
+
+## Juveniles
+plot(OXYAd~dROM_avg, data=ju)
+abline(lm(OXYAd~dROM_avg, data=ju))
+summary(lm(OXYAd~dROM_avg, data=ju)) #est=-0.79, p=0.26
+
+## Independents
+plot(OXYAd~dROM_avg, data=ind)
+abline(lm(OXYAd~dROM_avg, data=ind))
+summary(lm(OXYAd~dROM_avg, data=ind)) #est=-2.07, p=0.24
+
+f1 <- lm(OXYAd~dROM_avg, data=ne2)
+pl1 <- ggplot(f1$model, aes_string(x = names(f1$model)[2], y = names(f1$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(f1)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(f1$coef[[1]],5 ),
+                                               " \nSlope =",signif(f1$coef[[2]], 5),
+                                               " \nP =",signif(summary(f1)$coef[2,4], 5))) +
+  mytheme + xlab("Nestling ROM") + ylab("Nestling OXY")
+
+f2 <- lm(OXYAd~dROM_avg, data=ju)
+pl2 <- ggplot(f2$model, aes_string(x = names(f2$model)[2], y = names(f2$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(f2)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(f2$coef[[1]],5 ),
+                                               " \nSlope =",signif(f2$coef[[2]], 5),
+                                               " \nP =",signif(summary(f2)$coef[2,4], 5))) +
+  mytheme + xlab("Juvenile ROM") + ylab("Juvenile OXY")
+
+f3 <- lm(OXYAd~dROM_avg, data=ind)
+pl3 <- ggplot(f3$model, aes_string(x = names(f3$model)[2], y = names(f3$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "black") +
+  geom_label(aes(x = -Inf, y = Inf), hjust = 0, vjust=1, 
+             label = paste("Adj R2 = ",signif(summary(f3)$adj.r.squared, 5),
+                                               "\nIntercept =",signif(f3$coef[[1]],5 ),
+                                               " \nSlope =",signif(f3$coef[[2]], 5),
+                                               " \nP =",signif(summary(f3)$coef[2,4], 5))) +
+  mytheme + xlab("Independent ROM") + ylab("Independent OXY")
+
+cowplot::plot_grid(pl1, pl2, pl3, nrow=1, labels = c("A", "B", "C"))
+
+# supplemental Fig S2.
+ggsave("oxi_correlations.png", plot=last_plot(), width=300, height=110, units="mm", dpi=300, scale=T)
+```
+
+
+
+# Simple GLMMs
+
+Oxi measures (ROM and OXY) with prospecting frequency + max distance + Sex
+```{r}
+library(lmerTest)
+library(DHARMa)
+library(sjPlot)
+library(ggeffects)
+
+#
+m1 <- lmer(rom_avg ~ scale(freq) + scale(max_dist) + Sex +(1|MarTerr), data=dat2)
+summary(m1) # freq sig
+simulationOutput <- simulateResiduals(fittedModel = m1)
+plot(simulationOutput)
+vif(m1) # highest 1.87
+r.squaredGLMM(m1)
+
+m2 <- lmer(oxy_avg ~ scale(freq) + scale(max_dist) + Sex +(1|MarTerr), data=dat2)
+summary(m2)
+simulationOutput1 <- simulateResiduals(fittedModel = m2)
+plot(simulationOutput1)
+vif(m2) #max 1.12
+r.squaredGLMM(m2)
+
+# Simple plots
+sjPlot::plot_model(m1, type = "pred", terms = c("freq"), line.size = 1) + 
+  theme_classic() +
+  mytheme + 
+  labs(title = "", x = "Prospecting frequency (in counts)", y = "Lifetime average d-ROMs (mg/dL)")
+
+sjPlot::plot_model(m2, type = "pred", terms = c("freq"), line.size = 1) + 
+  theme_classic() +
+  mytheme + 
+  labs(title = "", x = "Prospecting frequency (in counts)", y = "Lifetime average OXY-Ads (HClO/ml)")
+
+
+# Plots with raw points
+frq1 <- ggpredict(m1, terms = c("freq")) 
+pv <- signif(summary(m1)$coef[2,5], 3)
+plot(frq1, add.data =TRUE, line=1) +
+  theme_classic() +
+  mytheme + 
+  labs(title = "", x = "Prospecting frequency (count)", y = "First-year average d-ROMs (mg/dL)") +
+  geom_text(aes(x=10, y = 25), vjust="middle", parse=T, family = "sans", size=6,
+             label = paste0("italic(P) == ",  signif(summary(m1)$coef[2,5], 3)))
+
+frq2 <- ggpredict(m2, terms = c("freq")) 
+pv2 <- signif(summary(m2)$coef[2,5], 3)
+plot(frq2, add.data =TRUE, line=1) +
+  theme_classic() +
+  mytheme + 
+  labs(title = "", x = "Prospecting frequency (count)", y = "First-year average OXY-Ads (HClO/ml)") +
+  geom_text(aes(x=10, y = 210), vjust="middle", parse=T, family = "sans", size=6,
+             label = paste0("italic(P) == ",  signif(summary(m2)$coef[2,5], 3)))
+   
+                       
+# Remove outlier for ROM x freq
+# 1 point over 20
+hist(dat2$rom_avg)
+dat3 <- dat2[which(dat2$rom_avg < 20),]
+
+m10 <- lmer(rom_avg ~ scale(freq) + scale(max_dist) + Sex + (1|MarTerr), data=dat3)
+
+frq10 <- ggpredict(m10, terms = c("freq")) 
+pv0 <- signif(summary(m10)$coef[2,5], 3)
+plot(frq10, add.data =TRUE, line=1) +
+  theme_classic() +
+  mytheme + 
+  labs(title = "", x = "Prospecting frequency (count)", y = "First-year average d-ROMs (mg/dL)") +
+  geom_text(aes(x=10, y = 25), vjust="middle", parse=T, family = "sans", size=6,
+             label = paste0("italic(P) == ",  signif(summary(m10)$coef[2,5], 3)))
+# p = 0.172
+```
+
+
+
+
+### Model Selection ###
+#### AICc #####
+
+Make dataset with all values: group size, habitat values
+`habitat`, `natal`
+```{r}
+### 
+# Group size
+# summarize by group size for natal nest year
+natal$natnest <- substr(natal$NatalNest, 1, 6)
+
+grpsz <- natal %>% 
+  group_by(natnest) %>% 
+  dplyr::summarise(n = n_distinct(JayID))
+
+###
+# Territory habitat info
+habitat <- habitat %>% 
+  group_by(territory) %>% 
+  summarise(scrub = sum(CellCount))
+
+###
+# combine for year of prospecting (2019)
+dat$terr19 <- paste(dat$MarTerr, "19", sep="")
+
+dat2 <- dat %>% 
+  left_join(grpsz, by=c("terr19" = "natnest")) %>% #saves as n.y
+  left_join(habitat, by = c("MarTerr" = "territory")) %>% 
+  mutate(grpsize = n.y)
+
+# select only birds hatched in 2018
+dat2$year <- as.numeric(format(dat2$HatchDate, "%Y"))
+jay18 <- dat2[which(dat2$year==2018),]
+j18 <- jay18 %>% dplyr::select(JayID, MarTerr, Sex, grpsize, scrub, freq, max_dist, rom_avg, rom_ind, oxy_avg, oxy_ind)
+
+j18 <- na.omit(j18)
+
+# how many shared territories
+table(j18$MarTerr) #14 terrs, 5 have 2+ helpers
+
+table(j18$Sex) # 6 females, 15 males
+```
+
+
+Build models
+
+1. ROM
+```{r}
+# 21 individuals; 6 females, 15 males
+
+mod <- lmer(rom_avg ~ freq + max_dist + grpsize + scrub + Sex + (1|MarTerr), data=j18, REML=TRUE, na.action="na.fail")
+mod_sc <- lmer(rom_avg ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc)
+plot(mod_sc)
+
+ms1 <- dredge(mod, trace = TRUE, rank = "AICc") 
+ms2 <- dredge(mod_sc, trace = TRUE, rank = "AICc") 
+
+(attr(ms1, "rank.call")) # Get the models (fitted by REML, as in the global model) 
+(attr(ms2, "rank.call")) # Get the models (fitted by REML, as in the global model) 
+
+fmList1 <- get.models(ms1, 1:4)  # singular fit
+fmList2 <- get.models(ms2, 1:4) 
+
+summary(model.avg(fmList1)) 
+#################
+summary(model.avg(fmList2)) # ***THIS ONE*** #
+################
+
+# model average
+model.avg(fmList1, rank = "AICc", rank.args = list(REML = FALSE))
+model.avg(fmList2, rank = "AICc", rank.args = list(REML = FALSE))
+
+# remove random effect
+mod <- lm(rom_avg ~ freq + max_dist + grpsize + scrub + Sex, data=j18, na.action="na.fail")
+mod_sc <- lm(rom_avg ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex, 
+               data=j18, na.action="na.fail")
+
+ms1 <- dredge(mod, trace = TRUE, rank = "AICc") 
+ms2 <- dredge(mod_sc, trace = TRUE, rank = "AICc") 
+
+fmList1 <- get.models(ms1, 1:4) 
+fmList2 <- get.models(ms2, 1:4) 
+
+summary(model.avg(fmList1)) 
+summary(model.avg(fmList2)) 
+```
+
+2. OXY
+```{r}
+mod_sc1 <- lmer(oxy_avg ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc1) #vif <1.43
+plot(mod_sc1)
+
+ms3 <- dredge(mod_sc1, trace = TRUE, rank = "AICc") 
+
+fmList3 <- get.models(ms3, 1:4)
+summary(model.avg(fmList3)) 
+```
+
+3. Independent - none sig
+```{r}
+mod_sc0 <- lmer(rom_ind ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc0) #vif <1.43
+plot(mod_sc0)
+
+ms0 <- dredge(mod_sc0, trace = TRUE, rank = "AICc") 
+
+fmList0 <- get.models(ms0, 1:4)
+summary(model.avg(fmList0)) 
+```
+
+3. Independent take 2 - none sig
+```{r}
+j18 <- jay18 %>% dplyr::select(JayID, MarTerr, Sex, grpsize, scrub, freq, max_dist, rom_avg, rom_ind, oxy_avg, oxy_ind)
+j18 <- na.omit(j18)
+
+mod_sc0 <- lmer(rom_ind ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc0) #vif <1.43
+plot(mod_sc0)
+
+ms0 <- dredge(mod_sc0, trace = TRUE, rank = "AICc") 
+
+fmList0 <- get.models(ms0, 1:4)
+summary(model.avg(fmList0)) 
+```
+
+
+4. Weight differences
+```{r}
+j18 <- jay18 %>% dplyr::select(JayID, MarTerr, Sex, grpsize, scrub, freq, max_dist, wts_lm, wts_dif)
+j18 <- na.omit(j18)
+table(j18$Sex) #7 females 13 males
+
+mod_sc2 <- lmer(wts_dif ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail") #singular fit
+mod_sc3 <- lm(wts_dif ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex, 
+               data=j18, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc2) #vif <1.46
+car::vif(mod_sc3) #vif <1.46
+
+ms2 <- dredge(mod_sc2, trace = TRUE, rank = "AICc") 
+ms3 <- dredge(mod_sc3, trace = TRUE, rank = "AICc") 
+
+fmList2 <- get.models(ms2, 1:4)
+summary(model.avg(fmList2)) 
+
+fmList3 <- get.models(ms3, 1:4)
+summary(model.avg(fmList3)) 
 
 ```
 
+5. Weight change
+```{r}
+j18 <- jay18 %>% dplyr::select(JayID, MarTerr, Sex, grpsize, scrub, freq, max_dist, wts_lm, wts_dif)
+j18 <- na.omit(j18)
+table(j18$Sex) #7 females 13 males
+
+mod_sc4 <- lmer(wts_lm ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex + (1|MarTerr), 
+               data=j18, REML=TRUE, na.action="na.fail") #singular fit
+mod_sc5 <- lm(wts_lm ~ scale(freq) + scale(max_dist) + scale(grpsize) + scale(scrub) + Sex, 
+               data=j18, na.action="na.fail")
+
+# check VIF
+car::vif(mod_sc4) #vif <1.46
+car::vif(mod_sc5) #vif <1.46
+
+ms4 <- dredge(mod_sc4, trace = TRUE, rank = "AICc") 
+ms5 <- dredge(mod_sc5, trace = TRUE, rank = "AICc") 
+
+fmList2 <- get.models(ms2, 1:4)
+summary(model.avg(fmList2)) 
+
+fmList3 <- get.models(ms3, 1:4)
+summary(model.avg(fmList3)) 
+
+=```
