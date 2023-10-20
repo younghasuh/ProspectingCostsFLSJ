@@ -696,5 +696,6 @@ summary(model.avg(fmList2))
 
 fmList3 <- get.models(ms3, 1:4)
 summary(model.avg(fmList3)) 
+```
 
-=```
+
